@@ -48,71 +48,6 @@ typedef (NTAPI *PtrNtAlpcSendWaitReceivePort)(
 
 PtrNtAlpcSendWaitReceivePort OriginalNtAlpcSendWaitReceivePort = NULL;
 
-typedef HRESULT (STDMETHODCALLTYPE *PtrInvoke)(PVOID pvInstance, MEMBERID memid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-PtrInvoke OriginalInvoke = NULL;
-
-typedef HRESULT(STDMETHODCALLTYPE* PtrLoadRegTypeLib)(REFGUID rguid, WORD wVerMajor, WORD wVerMinor, LCID lcid, ITypeLib** pptlib);
-PtrLoadRegTypeLib OriginalLoadRegTypeLib = NULL;
-
-ULONG_PTR GetInvokeAddress(ITypeLib* pTypeLib)
-{
-    CLSID C_Excel = { 0 };
-    HRESULT hr = E_FAIL;
-    ITypeInfo* pTypeInfo = NULL;
-    ULONG_PTR InvokePtr = NULL;
-    do
-    {
-        // 000208d5-0000-0000-c000-000000000046
-        hr = CLSIDFromString(L"{000208d5-0000-0000-c000-000000000046", &C_Excel);
-        pTypeLib->AddRef();
-        hr = pTypeLib->GetTypeInfoOfGuid(C_Excel, &pTypeInfo);
-        if (FAILED(hr))
-        {
-            PrintLog("GetTypeInfoOfGuid");
-            break;
-        }
-        pTypeInfo->AddRef();
-        InvokePtr = ((ULONG_PTR**)pTypeInfo)[0][11];
-        DebugPrintfA("[TestMacro] pTypeInfo=0x%08X Invoke=0x%08X", pTypeInfo, InvokePtr);
-    } while (false);
-    return InvokePtr;
-}
-
-// hook func
-HRESULT STDMETHODCALLTYPE Filter(PVOID pvInstance, MEMBERID memid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr)
-{
-    if (memid == 0x15E && pDispParams->cArgs && pDispParams->rgvarg && pDispParams->rgvarg->vt == VT_BSTR)
-    {
-        DebugPrintfA("[Filter] ExecuteExcel4Macro Params=%S\n", pDispParams->rgvarg->bstrVal);
-    }
-    return OriginalInvoke(pvInstance, memid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
-}
-
-HRESULT MyLoadRegTypeLib(REFGUID rguid, WORD wVerMajor, WORD wVerMinor, LCID lcid, ITypeLib** pptlib)
-{
-    HRESULT hr = E_FAIL;
-    GUID C_Excel = { 0 };
-    hr = CLSIDFromString(L"{00020813-0000-0000-c000-000000000046}", &C_Excel);
-    hr = OriginalLoadRegTypeLib(rguid, wVerMajor, wVerMinor, lcid, pptlib);
-    if (SUCCEEDED(hr) && IsEqualGUID(rguid, C_Excel) && *pptlib)
-    {
-       OriginalInvoke = (PtrInvoke)GetInvokeAddress(*pptlib);
-       if (OriginalInvoke)
-       {
-           DetourTransactionBegin();
-           DetourUpdateThread(GetCurrentThread());
-           DetourAttach(&(PVOID&)OriginalInvoke, Filter);
-           if (DetourTransactionCommit() == NO_ERROR)
-           {
-               OutputDebugStringW(L"[install_hook][OriginalInvoke] detoured successfully\n");
-           }
-       }
-
-    }
-    return hr;
-}
-
-
 NTSTATUS NTAPI MyNtAlpcSendWaitReceivePort(
     _In_ HANDLE PortHandle,
     _In_ ULONG Flags,
@@ -126,8 +61,6 @@ NTSTATUS NTAPI MyNtAlpcSendWaitReceivePort(
 {
 
     // https://docs.microsoft.com/en-us/windows/win32/api/rpcasync/ns-rpcasync-rpc_call_attributes_v2_a
-
-
 
 
     RPC_CALL_ATTRIBUTES_V2_A CallAttributes;  // this maps to RPC_CALL_ATTRIBUTES_V1
